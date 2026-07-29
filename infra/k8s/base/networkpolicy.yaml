@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: flowpilot}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-product-traffic, namespace: flowpilot}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - {protocol: TCP, port: 3000}
+        - {protocol: TCP, port: 8000}
+        - {protocol: TCP, port: 8010}
+  egress:
+    - to:
+        - namespaceSelector: {}
+    - to:
+        - ipBlock: {cidr: 0.0.0.0/0, except: ["169.254.169.254/32"]}
+      ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 5432}
+        - {protocol: TCP, port: 8069}

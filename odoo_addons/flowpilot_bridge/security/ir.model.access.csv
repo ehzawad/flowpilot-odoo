@@ -1,0 +1,3 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_flowpilot_execution_receipt_system,flowpilot.execution.receipt system,model_flowpilot_execution_receipt,base.group_system,1,0,1,0
+access_flowpilot_webhook_event_system,flowpilot.webhook.event system,model_flowpilot_webhook_event,base.group_system,1,1,1,0

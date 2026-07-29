@@ -1,0 +1,153 @@
+name: flowpilot
+
+x-python-service: &python-service
+  env_file: .env
+  restart: unless-stopped
+  depends_on:
+    product-db:
+      condition: service_healthy
+  networks: [flowpilot]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  product-db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: flowpilot
+      POSTGRES_USER: flowpilot
+      POSTGRES_PASSWORD: flowpilot
+    ports: ["5433:5432"]
+    volumes: ["product-db-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowpilot -d flowpilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [flowpilot]
+
+  api:
+    <<: *python-service
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://flowpilot:flowpilot@product-db:5432/flowpilot
+      WORKER_DATABASE_URL: postgresql+psycopg://flowpilot:flowpilot@product-db:5432/flowpilot
+      AUTO_CREATE_SCHEMA: "true"
+      SEED_DEMO_DATA: "true"
+      ODOO_MCP_URL: http://odoo-mcp:8010/mcp
+      THIRD_PARTY_MCP_URL: http://supplier-mcp:8020/mcp
+    command: ["uv", "run", "uvicorn", "flowpilot.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  worker:
+    <<: *python-service
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://flowpilot:flowpilot@product-db:5432/flowpilot
+      WORKER_DATABASE_URL: postgresql+psycopg://flowpilot:flowpilot@product-db:5432/flowpilot
+      AUTO_CREATE_SCHEMA: "true"
+      ODOO_MCP_URL: http://odoo-mcp:8010/mcp
+      THIRD_PARTY_MCP_URL: http://supplier-mcp:8020/mcp
+    command: ["uv", "run", "python", "-m", "flowpilot.worker.main"]
+    healthcheck:
+      test: ["CMD", "uv", "run", "python", "-m", "flowpilot.worker.healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+  odoo-mcp:
+    <<: *python-service
+    build:
+      context: .
+      dockerfile: services/odoo_mcp/Dockerfile
+    environment:
+      ODOO_MCP_HOST: 0.0.0.0
+      ODOO_MCP_PORT: "8010"
+    command: ["uv", "run", "python", "-m", "flowpilot.odoo_mcp.server"]
+    ports: ["8010:8010"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',8010),2); s.close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  supplier-mcp:
+    <<: *python-service
+    build:
+      context: .
+      dockerfile: services/supplier_mcp/Dockerfile
+    environment:
+      SUPPLIER_MCP_HOST: 0.0.0.0
+      SUPPLIER_MCP_PORT: "8020"
+    command: ["uv", "run", "python", "-m", "flowpilot.supplier_mcp.server"]
+    ports: ["8020:8020"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',8020),2); s.close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  web:
+    build:
+      context: apps/web
+      dockerfile: Dockerfile
+    environment:
+      INTERNAL_API_BASE_URL: http://api:8000
+      FLOWPILOT_WEB_AUTH_MODE: demo
+      DEMO_TENANT_ID: tenant-demo
+      DEMO_USER_ID: user-demo
+      DEMO_USER_EMAIL: operator@northstar.example
+    ports: ["3000:3000"]
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [flowpilot]
+    security_opt: ["no-new-privileges:true"]
+
+  odoo-db:
+    image: postgres:15
+    profiles: ["odoo"]
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: odoo
+    volumes: ["odoo-db-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odoo -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [flowpilot]
+
+  odoo:
+    image: odoo:19.0
+    profiles: ["odoo"]
+    depends_on:
+      odoo-db:
+        condition: service_healthy
+    environment:
+      HOST: odoo-db
+      USER: odoo
+      PASSWORD: odoo
+    ports: ["8069:8069"]
+    volumes:
+      - odoo-data:/var/lib/odoo
+      - ./odoo_addons:/mnt/extra-addons:ro
+    networks: [flowpilot]
+
+networks:
+  flowpilot:
+    driver: bridge
+
+volumes:
+  product-db-data:
+  odoo-db-data:
+  odoo-data:

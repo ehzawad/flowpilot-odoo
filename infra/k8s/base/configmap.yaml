@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flowpilot-config
+  namespace: flowpilot
+data:
+  ENVIRONMENT: production
+  AUTH_MODE: oidc
+  AGENT_RUNTIME: openai
+  ODOO_MODE: json2
+  ODOO_WRITE_MODE: bridge
+  AUTO_CREATE_SCHEMA: "false"
+  SEED_DEMO_DATA: "false"
+  PROMETHEUS_ENABLED: "true"
+  ODOO_MCP_URL: http://odoo-mcp:8010/mcp
+  THIRD_PARTY_MCP_ENABLED: "false"
+  INTERNAL_API_BASE_URL: http://api:8000
+  FLOWPILOT_WEB_AUTH_MODE: oidc

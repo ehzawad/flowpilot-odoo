@@ -1,0 +1,1 @@
+"""FlowPilot odoo package."""

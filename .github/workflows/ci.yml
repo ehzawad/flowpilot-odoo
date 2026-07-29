@@ -1,0 +1,136 @@
+name: FlowPilot CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flowpilot-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --all-groups
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy src
+      - run: uv run pytest -m "not integration and not live"
+      - run: uv run python -m flowpilot.scripts.smoke
+      - run: uv run python evals/run_local.py
+      - run: uv run python scripts/validate_repo.py
+      - run: uv run python -m compileall -q src odoo_addons migrations evals loadtests scripts
+      - name: Exercise migrations on SQLite
+        env:
+          DATABASE_URL: sqlite:////tmp/flowpilot-migration.db
+          AUTO_CREATE_SCHEMA: "false"
+        run: |
+          uv run alembic upgrade head
+          uv run alembic downgrade base
+
+  python-compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - run: uv sync --all-groups
+      - run: uv run pytest -m "not integration and not live"
+
+  postgres-rls:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: flowpilot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d flowpilot"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --all-groups
+      - name: Migrate PostgreSQL
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/flowpilot
+          AUTO_CREATE_SCHEMA: "false"
+        run: uv run alembic upgrade head
+      - name: Prove forced tenant RLS
+        env:
+          POSTGRES_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/flowpilot
+        run: uv run pytest tests/integration/test_postgres_rls.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run build
+
+  containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: cp .env.example .env
+      - run: docker compose config --quiet
+      - run: docker build -f apps/api/Dockerfile -t flowpilot-api:test .
+      - run: docker build -f apps/worker/Dockerfile -t flowpilot-worker:test .
+      - run: docker build -f services/odoo_mcp/Dockerfile -t flowpilot-odoo-mcp:test .
+      - run: docker build -f services/supplier_mcp/Dockerfile -t flowpilot-supplier-mcp:test .
+      - run: docker build -f apps/web/Dockerfile -t flowpilot-web:test apps/web
+
+  infrastructure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+      - uses: azure/setup-kubectl@v5
+        with:
+          version: latest
+      - name: Terraform formatting and validation
+        working-directory: infra/terraform/aws
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false
+          terraform validate
+      - name: Render Kubernetes base and local overlay
+        run: |
+          kubectl kustomize infra/k8s/base > /tmp/flowpilot-kubernetes-base.yaml
+          kubectl kustomize infra/k8s/overlays/local > /tmp/flowpilot-kubernetes-local.yaml

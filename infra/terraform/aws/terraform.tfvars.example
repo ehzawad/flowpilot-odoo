@@ -1,0 +1,7 @@
+project_name              = "flowpilot"
+environment               = "pilot"
+aws_region                = "us-east-1"
+database_instance_class   = "db.t4g.micro"
+database_multi_az         = false
+monthly_budget_usd        = 150
+budget_notification_email = "you@example.com"

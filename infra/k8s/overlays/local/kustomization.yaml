@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  - target: {kind: ConfigMap, name: flowpilot-config}
+    patch: |-
+      - op: replace
+        path: /data/ENVIRONMENT
+        value: development
+      - op: replace
+        path: /data/AUTH_MODE
+        value: demo
+      - op: replace
+        path: /data/AGENT_RUNTIME
+        value: fake
+      - op: replace
+        path: /data/ODOO_MODE
+        value: fake
